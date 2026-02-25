@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.auth import _LOGGED_IN_SELECTOR, is_logged_in, wait_for_manual_login
+from src.auth import is_logged_in, wait_for_manual_login
 from src.browser import AUTH_STATE_PATH, BrowserManager
 
 logging.basicConfig(
@@ -59,12 +59,12 @@ async def run() -> None:
                 print("\n  ✓ 登录态复用成功，无需重新登录")
                 print(f"    当前页面：{page.url}")
 
-                # 尝试提取用户主页路径以进一步确认
+                # 尝试提取当前用户主页路径（侧边栏个人中心链接）
                 try:
-                    user_el = await page.query_selector(_LOGGED_IN_SELECTOR)
+                    user_el = await page.query_selector("a[href*='/user/profile']:not([href*='explore_feed'])")
                     href = await user_el.get_attribute("href") if user_el else None
                     if href:
-                        print(f"    用户主页路径：{href}")
+                        print(f"    用户主页路径：{href.split('?')[0]}")
                 except Exception:
                     pass
             else:

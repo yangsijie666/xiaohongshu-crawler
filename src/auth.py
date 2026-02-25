@@ -26,23 +26,43 @@ logger = logging.getLogger(__name__)
 REDNOTE_HOME = "https://www.xiaohongshu.com"
 REDNOTE_LOGIN = "https://www.xiaohongshu.com/explore"
 
-# 已登录状态的判断依据：页面中存在用户头像元素
+# 未登录时页面中存在的"登录"按钮 class（React 渲染后可见）
+# 验证方式：headless 下访问首页，DOM 中有 .side-bar-component.login-btn 即为未登录
 # 若小红书改版导致选择器失效，可在此处更新
-_LOGGED_IN_SELECTOR = "a[href*='/user/profile']"
+_LOGIN_BTN_SELECTOR = ".side-bar-component.login-btn"
 
 # 手动登录等待超时（秒）
 LOGIN_WAIT_TIMEOUT = 120
 
 
 async def is_logged_in(page: Page) -> bool:
-    """访问首页，判断当前 context 的登录态是否有效。"""
+    """访问首页，判断当前 context 的登录态是否有效。
+
+    检测逻辑：
+      - 未登录 → 页面渲染后存在 .login-btn 元素
+      - 已登录 → .login-btn 元素不存在
+    """
     try:
         await page.goto(REDNOTE_HOME, wait_until="domcontentloaded", timeout=30_000)
-        await page.wait_for_selector(_LOGGED_IN_SELECTOR, timeout=5_000)
-        logger.info("登录态有效")
+        # 等待 React 完成首屏渲染（登录按钮或用户信息区均需 JS 渲染）
+        await asyncio.sleep(2)
+
+        # 页面未渲染（如被拦截）时直接判未登录
+        body_len: int = await page.evaluate("document.body.innerText.length")
+        if body_len < 100:
+            logger.info("页面内容过短，可能未正常渲染，判为未登录")
+            return False
+
+        login_btn = await page.query_selector(_LOGIN_BTN_SELECTOR)
+        if login_btn is not None:
+            logger.info("检测到登录按钮，未登录")
+            return False
+
+        logger.info("未检测到登录按钮，登录态有效")
         return True
-    except PlaywrightTimeoutError:
-        logger.info("未检测到登录态")
+
+    except Exception as e:
+        logger.warning("登录态检测异常：%s", e)
         return False
 
 
@@ -63,8 +83,10 @@ async def wait_for_manual_login(page: Page) -> bool:
     print("=" * 60 + "\n")
 
     try:
+        # 等待登录按钮消失：按钮不见即表示已完成登录
         await page.wait_for_selector(
-            _LOGGED_IN_SELECTOR,
+            _LOGIN_BTN_SELECTOR,
+            state="hidden",
             timeout=LOGIN_WAIT_TIMEOUT * 1_000,
         )
         logger.info("手动登录成功")

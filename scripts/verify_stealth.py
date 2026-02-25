@@ -29,9 +29,9 @@ TEST_URL = "https://bot.sannysoft.com"
 SCREENSHOT_PATH = Path("data/verify_stealth.png")
 
 # bot.sannysoft.com 各测试项的 DOM 结构：
-#   <table id="fp-tests"> <tr> <td>测试名</td> <td class="passed|failed">结果</td> </tr>
-# 通过 CSS 类名判断通过/失败
-_RESULTS_SELECTOR = "#fp-tests tr"
+#   <tr> <td>测试名</td> <td class="result passed|result failed">结果文本</td> </tr>
+# class 格式为 "result passed" 或 "result failed"（含空格的复合 class）
+_RESULTS_SELECTOR = "tr:has(td.result)"
 
 
 async def run() -> None:
@@ -47,16 +47,11 @@ async def run() -> None:
         page = await bm.new_page()
 
         logger.info("正在访问 %s …", TEST_URL)
-        await page.goto(TEST_URL, wait_until="networkidle", timeout=30_000)
+        # 使用 load 避免 networkidle 在该站点超时
+        await page.goto(TEST_URL, wait_until="load", timeout=30_000)
 
-        # 等待测试表格渲染完成
-        try:
-            await page.wait_for_selector(_RESULTS_SELECTOR, timeout=10_000)
-        except Exception:
-            logger.warning("未找到测试结果表格，页面结构可能已更新")
-
-        # 给 JS 测试充足时间执行
-        await asyncio.sleep(3)
+        # 等待页面内 JS 检测脚本全部执行完毕（该页面通过 JS 动态填充结果）
+        await asyncio.sleep(5)
 
         # 截图
         await page.screenshot(path=str(SCREENSHOT_PATH), full_page=True)
