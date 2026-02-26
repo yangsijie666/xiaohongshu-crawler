@@ -23,4 +23,4 @@ browser:
 storage:
   output_dir: "data"
   save_raw_json: true           # 是否保存原始 JSON
-  save_csv: true                # 是否保存 CSV
+  save_xlsx: true               # 是否保存 Excel（xlsx）

@@ -4,7 +4,7 @@ Phase 2 搜索采集验证脚本
 验证搜索采集的完整链路：
   1. 复用已有登录态（须先完成登录，参考 verify_login.py）
   2. 按关键词执行搜索，提取笔记摘要列表
-  3. 将结果存储为 JSON 和 CSV 文件
+  3. 将结果存储为 JSON 和 Excel 文件
   4. 输出验证报告
 
 运行方式：
@@ -106,17 +106,17 @@ async def run(keyword: str) -> bool:
         storage_config = {
             "output_dir": "data",
             "save_raw_json": True,
-            "save_csv": True,
+            "save_xlsx": True,
         }
         storage = Storage(storage_config)
-        storage.save_search_results(keyword, results)
+        storage.save_all(keyword, results, [])
 
         json_dir = Path("data/raw")
-        csv_dir = Path("data/processed")
+        xlsx_dir = Path("data/processed")
         json_files = list(json_dir.glob(f"*{keyword[:4]}*.json"))
-        csv_files = list(csv_dir.glob("*.csv"))
+        xlsx_files = list(xlsx_dir.glob("*.xlsx"))
         print(f"  data/raw/       {len(json_files)} 个 JSON 文件")
-        print(f"  data/processed/ {len(csv_files)} 个 CSV 文件")
+        print(f"  data/processed/ {len(xlsx_files)} 个 Excel 文件")
 
     # ---- 验证结论 ----
     print()

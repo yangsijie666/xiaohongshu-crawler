@@ -5,7 +5,7 @@ Phase 3 笔记详情 + 评论采集验证脚本
   1. 复用已有登录态（须先完成登录）
   2. 按关键词搜索，取少量笔记 URL
   3. 逐条打开笔记详情页，采集详情 + 评论
-  4. 将结果存储为 JSON 和 CSV 文件
+  4. 将结果存储为 JSON 和 Excel 文件
   5. 输出验证报告
 
 运行方式：
@@ -141,17 +141,17 @@ async def run(keyword: str) -> bool:
         storage_config = {
             "output_dir": "data",
             "save_raw_json": True,
-            "save_csv": True,
+            "save_xlsx": True,
         }
         storage = Storage(storage_config)
-        storage.save_note_details(keyword, note_details)
+        storage.save_all(keyword, search_results, note_details)
 
         json_dir = Path("data/raw")
-        csv_dir = Path("data/processed")
+        xlsx_dir = Path("data/processed")
         json_files = list(json_dir.glob(f"notes_*.json"))
-        csv_files = list(csv_dir.glob("*.csv"))
+        xlsx_files = list(xlsx_dir.glob("*.xlsx"))
         print(f"  data/raw/       {len(json_files)} 个笔记 JSON 文件")
-        print(f"  data/processed/ {len(csv_files)} 个 CSV 文件")
+        print(f"  data/processed/ {len(xlsx_files)} 个 Excel 文件")
 
     # ---- 验证结论 ----
     print()

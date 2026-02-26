@@ -7,9 +7,8 @@
   3. 确保登录态就绪（复用或手动登录）
   4. 遍历关键词列表：
      a. 搜索 → 采集笔记摘要列表
-     b. 保存搜索结果（JSON + CSV）
-     c. 逐条采集笔记详情 + 评论
-     d. 保存详情数据（JSON + CSV）
+     b. 逐条采集笔记详情 + 评论
+     c. 统一保存数据（JSON + Excel）
   5. 关键词之间随机延迟，模拟人类行为
 
 运行方式：
@@ -97,7 +96,7 @@ async def crawl_keyword(
     between_notes = tuple(delay_cfg.get("between_notes", [2.0, 5.0]))
 
     # ---- Step 1: 搜索 ----
-    logger.info("[Step 1/3] 搜索笔记列表（关键词：%s，目标：%d 条）", keyword, max_notes)
+    logger.info("[Step 1/2] 搜索笔记列表（关键词：%s，目标：%d 条）", keyword, max_notes)
     search_results = await search_notes(
         bm,
         keyword=keyword,
@@ -112,13 +111,9 @@ async def crawl_keyword(
 
     logger.info("搜索完成：获得 %d 条笔记摘要", len(search_results))
 
-    # ---- Step 2: 保存搜索结果 ----
-    logger.info("[Step 2/3] 保存搜索结果")
-    storage.save_search_results(keyword, search_results)
-
-    # ---- Step 3: 采集详情 + 评论 ----
+    # ---- Step 2: 采集详情 + 评论 ----
     logger.info(
-        "[Step 3/3] 批量采集笔记详情 + 评论（%d 条笔记，每条最多 %d 条评论）",
+        "[Step 2/2] 批量采集笔记详情 + 评论（%d 条笔记，每条最多 %d 条评论）",
         len(search_results),
         max_comments,
     )
@@ -131,8 +126,8 @@ async def crawl_keyword(
         scroll_interval=scroll_interval,
     )
 
-    # ---- Step 4: 保存详情数据 ----
-    storage.save_note_details(keyword, note_details)
+    # ---- 保存数据（JSON + Excel） ----
+    storage.save_all(keyword, search_results, note_details)
 
     # 统计本次采集结果
     total_comments = sum(len(note.get("comments", [])) for note in note_details)
