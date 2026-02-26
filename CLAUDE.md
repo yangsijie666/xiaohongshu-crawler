@@ -4,7 +4,7 @@
 
 小红书 (Xiaohongshu) 数据采集框架，基于 Playwright 实现真实浏览器自动化，具备双层反检测能力（playwright-stealth + browserforge）。
 
-当前处于 **Phase 1 完成** 状态（浏览器管理 + 登录认证），Phase 2-4 待开发。
+当前处于 **Phase 3 完成** 状态（笔记详情 + 评论采集），Phase 4 待开发。
 
 ## 技术栈
 
@@ -27,6 +27,8 @@ uv run python main.py
 # 验证脚本
 uv run python scripts/verify_stealth.py    # 反检测验证
 uv run python scripts/verify_login.py      # 登录验证
+uv run python scripts/verify_search.py     # 搜索采集验证
+uv run python scripts/verify_note.py       # 笔记详情+评论验证
 
 # 添加依赖
 uv add <package-name>
@@ -38,7 +40,12 @@ uv add <package-name>
 src/
 ├── stealth.py     # 反检测配置（指纹生成 + stealth 注入）
 ├── browser.py     # Playwright 浏览器生命周期管理 (BrowserManager)
-└── auth.py        # 登录 & 会话管理
+├── auth.py        # 登录 & 会话管理
+├── search.py      # 搜索结果采集（瀑布流滚动）
+├── note.py        # 笔记详情采集（含重试逻辑）
+├── comment.py     # 评论采集（Top N）
+├── parser.py      # 页面数据解析（搜索卡片 / 详情 / 评论）
+└── storage.py     # 数据存储（JSON + CSV）
 scripts/           # 验证脚本
 config/settings.yaml  # 采集配置（关键词、延迟、浏览器参数）
 main.py            # 入口文件
@@ -104,15 +111,15 @@ main.py            # 入口文件
 
 - **Conventional Commits:** `type(scope): 中文描述`
 - 类型: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`
-- 主分支: `master`，当前开发分支: `feat/phase1-basic-framework`
+- 主分支: `master`，当前开发分支: `feat/phase3-note-comment`
 - 不主动 commit，用户要求时才提交
 - 不主动 push，用户要求时才推送
 
 ## 开发路线图
 
 - **Phase 1** ✅ 基础框架（浏览器 + 反检测 + 认证）
-- **Phase 2** ⏳ 搜索采集（search.py, parser.py, storage.py）
-- **Phase 3** ⏳ 详情 & 评论（note.py, comment.py）
+- **Phase 2** ✅ 搜索采集（search.py, parser.py, storage.py）
+- **Phase 3** ✅ 详情 & 评论（note.py, comment.py）
 - **Phase 4** ⏳ 集成 & 优化（完整流程、日志、端到端测试）
 
 ## 重要路径
