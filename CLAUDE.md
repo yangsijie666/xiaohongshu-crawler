@@ -4,7 +4,7 @@
 
 小红书 (Xiaohongshu) 数据采集框架，基于 Playwright 实现真实浏览器自动化，具备双层反检测能力（playwright-stealth + browserforge）。
 
-当前处于 **Phase 3 完成** 状态（笔记详情 + 评论采集），Phase 4 待开发。
+当前处于 **Phase 4 完成** 状态（集成 & 优化），所有阶段均已完成。
 
 ## 技术栈
 
@@ -120,7 +120,7 @@ main.py            # 入口文件
 - **Phase 1** ✅ 基础框架（浏览器 + 反检测 + 认证）
 - **Phase 2** ✅ 搜索采集（search.py, parser.py, storage.py）
 - **Phase 3** ✅ 详情 & 评论（note.py, comment.py）
-- **Phase 4** ⏳ 集成 & 优化（完整流程、日志、端到端测试）
+- **Phase 4** ✅ 集成 & 优化（完整流程、日志、端到端测试）
 
 ## 重要路径
 
