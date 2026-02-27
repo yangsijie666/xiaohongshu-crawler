@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 from mcp.server.fastmcp import FastMCP
@@ -170,6 +171,117 @@ async def get_note_detail(note_url: str, max_comments: int = 20) -> dict:
 
     logger.info("get_note_detail 完成：note_id=%s", result.get("note_id", "unknown"))
     return result
+
+
+# ============================================================
+# Phase C 工具
+# ============================================================
+
+# MCP 资源路径常量（模块级，供测试 patch）
+_CONFIG_PATH = Path("config/settings.yaml")
+_DATA_DIR = Path("data")
+
+
+@mcp.tool()
+async def crawl_keyword(keyword: str, max_notes: int = 10, max_comments: int = 20) -> dict:
+    """完整采集流程：搜索关键词 → 采集笔记详情 + 评论 → 保存到本地文件。
+
+    Args:
+        keyword: 搜索关键词（必填，不能为空）
+        max_notes: 最多采集笔记数（可选，默认 10，范围 1-20）
+        max_comments: 每条笔记最多采集评论数（可选，默认 20，范围 0-50）
+
+    Returns:
+        keyword / search_count / detail_count / total_comments / summary
+        失败时返回 {"error": True, "message": str}
+
+    预计耗时：2-15 分钟（取决于笔记数量）。建议先用 search_notes 验证关键词再调用本工具。
+    """
+    stripped_keyword = keyword.strip()
+    if not stripped_keyword:
+        return {"error": True, "message": "keyword 不能为空"}
+
+    # 边界截断
+    clamped_max_notes = max(1, min(max_notes, 20))
+    clamped_max_comments = max(0, min(max_comments, 50))
+
+    logger.info(
+        "工具调用：crawl_keyword（keyword=%s，max_notes=%d，max_comments=%d）",
+        stripped_keyword, clamped_max_notes, clamped_max_comments,
+    )
+    result = await _session.crawl_keyword(
+        keyword=stripped_keyword,
+        max_notes=clamped_max_notes,
+        max_comments=clamped_max_comments,
+    )
+    logger.info("crawl_keyword 完成：%s", result.get("summary", result.get("message", "")))
+    return result
+
+
+@mcp.tool()
+async def get_saved_data(keyword: str = "") -> dict:
+    """查询本地已保存的采集数据文件列表。
+
+    Args:
+        keyword: 关键词过滤（可选，不区分大小写，模糊匹配；不传或空字符串表示返回全部文件）
+
+    Returns:
+        files: 文件列表，每条包含 path / keyword / created_at / size_bytes
+
+    预计耗时：< 1 秒（本地文件系统扫描）
+    """
+    filter_keyword = keyword.strip() or None
+    logger.info("工具调用：get_saved_data（keyword=%s）", filter_keyword or "(全部)")
+    result = await _session.get_saved_data(keyword=filter_keyword)
+    logger.info("get_saved_data 完成：%d 个文件", len(result.get("files", [])))
+    return result
+
+
+# ============================================================
+# Phase C 资源端点
+# ============================================================
+
+
+@mcp.resource("rednote://config")
+async def get_config_resource() -> str:
+    """读取当前 settings.yaml 配置（只读）。
+
+    返回 YAML 格式的配置文本，供 AI 了解当前采集参数设置（关键词、延迟、存储等）。
+    """
+    if not _CONFIG_PATH.exists():
+        return f"配置文件不存在：{_CONFIG_PATH}。请确保 config/settings.yaml 已创建。"
+    return _CONFIG_PATH.read_text(encoding="utf-8")
+
+
+@mcp.resource("rednote://data/{filename}")
+async def get_data_resource(filename: str) -> str:
+    """读取指定本地数据文件内容（只读）。
+
+    在 data/raw/ 和 data/processed/ 子目录中查找文件并返回内容。
+
+    Args:
+        filename: 数据文件名（如 Python教程_20240315_143022.json），不含路径
+
+    Returns:
+        文件的文本内容（JSON 格式），或错误消息
+
+    安全限制：只允许访问 data/ 目录下的文件，拒绝路径穿越（../）攻击。
+    """
+    # 安全检查：拒绝路径穿越和子目录访问
+    if ".." in filename or "/" in filename or "\\" in filename:
+        return f"无效的文件名（不允许路径穿越或子目录访问）：{filename}"
+
+    # 在 raw 和 processed 两个子目录中查找
+    for subdir in ("raw", "processed"):
+        file_path = _DATA_DIR / subdir / filename
+        if file_path.exists() and file_path.is_file():
+            return file_path.read_text(encoding="utf-8", errors="replace")
+
+    return (
+        f"文件不存在：{filename}。"
+        "请先使用 crawl_keyword 或 search_notes 采集数据，"
+        "或通过 get_saved_data 查看已有文件列表。"
+    )
 
 
 # ============================================================

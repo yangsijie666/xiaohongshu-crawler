@@ -28,17 +28,54 @@ import asyncio
 import contextlib
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
 from typing import AsyncGenerator, Optional
 
 import src.note
 import src.search
 from src.auth import is_logged_in
 from src.browser import BrowserManager
+from src.storage import Storage
 
 logger = logging.getLogger(__name__)
 
 # 浏览器未启动时的统一错误消息
 _ERR_BROWSER_NOT_RUNNING = "浏览器未启动。请确保 MCP 服务正常运行后重试。"
+
+# crawl_keyword 工具使用的默认存储配置
+_DEFAULT_STORAGE_CONFIG: dict = {
+    "output_dir": "data",
+    "save_raw_json": True,
+    "save_xlsx": True,
+}
+
+# 采集完整流程的 max_notes 上限（避免单次任务耗时过长）
+_MAX_NOTES_LIMIT = 20
+
+
+def _extract_keyword_from_stem(stem: str) -> str:
+    """从文件名（不含扩展名）提取关键词。
+
+    文件名格式：[notes_]{keyword}_{YYYYMMDD}_{HHMMSS}
+    例如：Python教程_20240315_143022  →  Python教程
+          notes_小红书技巧_20240315_143022  →  小红书技巧
+
+    Args:
+        stem: 文件名（不含扩展名）
+
+    Returns:
+        提取到的关键词字符串
+    """
+    # 去掉 notes_ 前缀（笔记详情文件的命名约定）
+    if stem.startswith("notes_"):
+        stem = stem[6:]
+
+    # 时间戳由两段组成：{YYYYMMDD}_{HHMMSS}，占最后两个 "_" 分隔块
+    parts = stem.rsplit("_", 2)
+    if len(parts) >= 3:
+        return parts[0]
+    return stem
 
 
 class CrawlerSession:
@@ -221,3 +258,129 @@ class CrawlerSession:
             finally:
                 # 确保页面始终被关闭，防止资源泄漏
                 await page.close()
+
+    async def crawl_keyword(
+        self,
+        keyword: str,
+        max_notes: int = 10,
+        max_comments: int = 20,
+    ) -> dict:
+        """执行完整采集流程：搜索 → 详情 → 评论 → 存储（MCP 工具调用入口）。
+
+        Args:
+            keyword: 搜索关键词（调用方负责确保非空）
+            max_notes: 最多采集笔记数（默认 10，自动限制到 20 以内）
+            max_comments: 每条笔记最多采集评论数（默认 20）
+
+        Returns:
+            {
+                "keyword": str,
+                "search_count": int,   # 搜索阶段获得的笔记数
+                "detail_count": int,   # 成功采集详情的笔记数
+                "total_comments": int, # 所有笔记的评论总数
+                "summary": str         # 人类可读的采集摘要
+            }
+            或 {"error": True, "message": str}（浏览器未启动 / 竞态）
+        """
+        # 快速路径：浏览器明确未启动时提前返回
+        if not self._running:
+            return {"error": True, "message": _ERR_BROWSER_NOT_RUNNING}
+
+        # 限制 max_notes 到上限，避免单次任务耗时过长
+        clamped_max_notes = min(max_notes, _MAX_NOTES_LIMIT)
+
+        async with self._lock:
+            # 二次防护：stop() 可能在获取锁前被调用（_bm 变为 None）
+            if self._bm is None:
+                return {"error": True, "message": _ERR_BROWSER_NOT_RUNNING}
+
+            # Step 1: 搜索
+            search_results = await src.search.search_notes(
+                self._bm, keyword=keyword, max_count=clamped_max_notes
+            )
+
+            # Step 2: 批量采集详情 + 评论（无结果时跳过）
+            if search_results:
+                note_details = await src.note.fetch_note_details(
+                    self._bm, search_results=search_results, max_comments=max_comments
+                )
+            else:
+                note_details = []
+
+            # Step 3: 持久化（JSON + Excel）
+            storage = Storage(_DEFAULT_STORAGE_CONFIG)
+            storage.save_all(keyword, search_results, note_details)
+
+        total_comments = sum(len(note.get("comments", [])) for note in note_details)
+        summary = (
+            f"关键词 [{keyword}] 采集完成："
+            f"搜索 {len(search_results)} 条，"
+            f"详情 {len(note_details)} 条，"
+            f"评论 {total_comments} 条"
+        )
+        logger.info(summary)
+        return {
+            "keyword": keyword,
+            "search_count": len(search_results),
+            "detail_count": len(note_details),
+            "total_comments": total_comments,
+            "summary": summary,
+        }
+
+    async def get_saved_data(
+        self,
+        keyword: Optional[str] = None,
+        data_dir: Path = Path("data"),
+    ) -> dict:
+        """查询本地已保存的采集数据文件（不依赖浏览器）。
+
+        扫描 data/raw/ 和 data/processed/ 目录，返回文件元数据列表。
+        可通过 keyword 参数进行模糊过滤（不区分大小写）。
+
+        Args:
+            keyword: 关键词过滤（可选，空值 / None 表示返回所有文件）
+            data_dir: 数据根目录（默认 "data"；测试时传入 tmp_path）
+
+        Returns:
+            {
+                "files": [
+                    {
+                        "path": str,         # 文件相对路径
+                        "keyword": str,      # 从文件名提取的关键词
+                        "created_at": str,   # 文件创建时间（ISO 8601）
+                        "size_bytes": int    # 文件大小（字节）
+                    },
+                    ...
+                ]
+            }
+        """
+        files: list[dict] = []
+        # 只识别 raw 和 processed 两个子目录
+        for subdir in ("raw", "processed"):
+            dir_path = data_dir / subdir
+            if not dir_path.exists():
+                continue
+
+            for file_path in sorted(dir_path.iterdir()):
+                if not file_path.is_file():
+                    continue
+
+                # 只处理 JSON 和 xlsx 文件
+                if file_path.suffix not in (".json", ".xlsx"):
+                    continue
+
+                extracted_keyword = _extract_keyword_from_stem(file_path.stem)
+
+                # keyword 过滤：大小写不敏感的模糊匹配
+                if keyword and keyword.lower() not in extracted_keyword.lower():
+                    continue
+
+                stat = file_path.stat()
+                files.append({
+                    "path": str(file_path),
+                    "keyword": extracted_keyword,
+                    "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(timespec="seconds"),
+                    "size_bytes": stat.st_size,
+                })
+
+        return {"files": files}
