@@ -26,8 +26,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from src.browser import BrowserManager
 from src.comment import fetch_comments
@@ -52,6 +53,62 @@ _RENDER_WAIT = 2.0
 
 # 单条笔记最大重试次数
 _MAX_RETRIES = 2
+
+
+# 小红书笔记 URL 中 note_id 的提取正则，格式：/explore/{note_id}
+_NOTE_ID_PATTERN = re.compile(r"/explore/([a-zA-Z0-9]+)")
+
+
+def _extract_note_id_from_url(note_url: str) -> str | None:
+    """从笔记详情页 URL 中提取 note_id。
+
+    支持格式：https://www.xiaohongshu.com/explore/{note_id}?xsec_token=...
+
+    Args:
+        note_url: 笔记详情页完整 URL
+
+    Returns:
+        note_id 字符串，或 None（URL 格式不符）
+    """
+    match = _NOTE_ID_PATTERN.search(note_url)
+    return match.group(1) if match else None
+
+
+async def fetch_single_note(
+    bm: BrowserManager,
+    note_url: str,
+    max_comments: int = 20,
+    scroll_pause: float = 1.5,
+    scroll_interval: tuple[float, float] = (1.0, 3.0),
+) -> dict | None:
+    """采集单篇笔记详情 + 评论（MCP 公开接口）。
+
+    从 note_url 自动提取 note_id，再调用内部采集逻辑。
+    供 MCP 工具和外部模块直接调用，无需预先知道 note_id。
+
+    Args:
+        bm: 已初始化且登录的 BrowserManager 实例
+        note_url: 笔记详情页完整 URL
+        max_comments: 最多采集评论数（默认 20）
+        scroll_pause: 评论区滚动等待时间（秒）
+        scroll_interval: 评论区额外随机延迟范围 (min, max)（秒）
+
+    Returns:
+        包含笔记详情和评论的字典，或 None（URL 无效 / 采集失败）
+    """
+    note_id = _extract_note_id_from_url(note_url)
+    if not note_id:
+        logger.error("无法从 URL 中提取 note_id，请检查 URL 格式：%s", note_url)
+        return None
+
+    return await _fetch_single_note(
+        bm,
+        note_id=note_id,
+        note_url=note_url,
+        max_comments=max_comments,
+        scroll_pause=scroll_pause,
+        scroll_interval=scroll_interval,
+    )
 
 
 async def fetch_note_details(
@@ -189,7 +246,7 @@ async def _fetch_single_note(
     return None
 
 
-async def _wait_for_content(page) -> None:
+async def _wait_for_content(page: Page) -> None:
     """等待笔记详情页核心内容渲染完成。
 
     按优先级尝试多个选择器，任一出现即认为页面就绪。

@@ -88,8 +88,12 @@ class TestCrawlerSessionLifecycle:
             # BrowserManager 只应被实例化一次
             assert MockBM.call_count == 1
 
-    async def test_stop_calls_aexit(self):
-        """stop() 应正确调用 BrowserManager.__aexit__。"""
+    async def test_stop_cleans_up_resources(self):
+        """stop() 应正确关闭 BrowserManager 并清理所有内部状态。
+
+        AsyncExitStack.aclose() 通过 type(cm).__aexit__ 触发清理，
+        验证 stop() 后 _bm 和 _exit_stack 均已置空。
+        """
         with patch("src.session.BrowserManager") as MockBM:
             mock_bm = AsyncMock()
             MockBM.return_value = mock_bm
@@ -100,7 +104,9 @@ class TestCrawlerSessionLifecycle:
             await session.start()
             await session.stop()
 
-            mock_bm.__aexit__.assert_called_once_with(None, None, None)
+            assert session._bm is None
+            assert session._exit_stack is None
+            assert session.is_running() is False
 
 
 class TestCrawlerSessionLock:
@@ -210,3 +216,22 @@ class TestCrawlerSessionLoginStatus:
                 await session.check_login_status()
 
                 mock_page.close.assert_called_once()
+
+
+class TestCrawlerSessionRaceConditionGuards:
+    """测试各方法的竞态条件二次防护（_bm is None 路径）。"""
+
+    async def test_check_login_returns_error_when_bm_is_none_despite_running_flag(self):
+        """_running=True 但 _bm=None 时，check_login_status 应返回 browser_running=False。
+
+        模拟 stop() 在快速路径检查后、获取锁前完成，将 _bm 置为 None 的竞态场景。
+        """
+        session = CrawlerSession()
+        session._running = True  # 绕过快速路径
+        session._bm = None       # 模拟 stop() 已将 _bm 置空
+
+        result = await session.check_login_status()
+
+        assert result["logged_in"] is False
+        assert result["browser_running"] is False
+        assert "message" in result

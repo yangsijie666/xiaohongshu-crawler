@@ -25,17 +25,20 @@ MCP 服务级浏览器会话管理模块
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional
 
+import src.note
+import src.search
 from src.auth import is_logged_in
 from src.browser import BrowserManager
 
-if TYPE_CHECKING:
-    pass
-
 logger = logging.getLogger(__name__)
+
+# 浏览器未启动时的统一错误消息
+_ERR_BROWSER_NOT_RUNNING = "浏览器未启动。请确保 MCP 服务正常运行后重试。"
 
 
 class CrawlerSession:
@@ -55,6 +58,7 @@ class CrawlerSession:
         """
         self._headless = headless
         self._bm: Optional[BrowserManager] = None
+        self._exit_stack: Optional[contextlib.AsyncExitStack] = None
         self._running: bool = False
         self._lock = asyncio.Lock()
 
@@ -65,6 +69,10 @@ class CrawlerSession:
     async def start(self) -> None:
         """启动浏览器（幂等：已在运行则直接返回）。
 
+        使用 AsyncExitStack 管理 BrowserManager 生命周期：
+          - 若 BrowserManager.__aenter__ 抛出异常，ExitStack 自动清理已注册资源
+          - self._exit_stack / self._bm 仅在启动成功后赋值，确保一致性
+
         Raises:
             Exception: 浏览器启动失败时透传异常
         """
@@ -73,16 +81,21 @@ class CrawlerSession:
             return
 
         logger.info("启动 MCP 浏览器会话（headless=%s）", self._headless)
-        self._bm = BrowserManager(headless=self._headless)
-        await self._bm.__aenter__()
+        exit_stack = contextlib.AsyncExitStack()
+        # enter_async_context 内部调用 __aenter__，失败时 exit_stack 自动清理
+        bm = await exit_stack.enter_async_context(BrowserManager(headless=self._headless))
+        # 全部成功后才赋值，确保 stop() 始终处理完整状态
+        self._exit_stack = exit_stack
+        self._bm = bm
         self._running = True
         logger.info("MCP 浏览器会话启动成功")
 
     async def stop(self) -> None:
         """关闭浏览器并释放所有资源（幂等：未运行时安全调用）。"""
-        if self._bm is not None:
+        if self._exit_stack is not None:
             logger.info("关闭 MCP 浏览器会话")
-            await self._bm.__aexit__(None, None, None)
+            await self._exit_stack.aclose()  # 调用已注册的 __aexit__(None, None, None)
+            self._exit_stack = None
             self._bm = None
         self._running = False
         logger.info("MCP 浏览器会话已关闭")
@@ -102,6 +115,67 @@ class CrawlerSession:
         async with self._lock:
             yield self._bm
 
+    async def search_notes(self, keyword: str, max_count: int = 20) -> dict:
+        """按关键词搜索笔记，返回摘要列表（MCP 工具调用入口）。
+
+        Args:
+            keyword: 搜索关键词（调用方负责确保非空）
+            max_count: 最多返回条数（默认 20）
+
+        Returns:
+            {
+                "keyword": str,     # 搜索关键词
+                "count": int,       # 实际返回条数
+                "results": list     # 笔记摘要列表
+            }
+            或 {"error": True, "message": str, "results": []}（浏览器未启动）
+        """
+        # 快速路径：浏览器明确未启动时提前返回
+        if not self._running:
+            return {"error": True, "message": _ERR_BROWSER_NOT_RUNNING, "results": []}
+
+        async with self._lock:
+            # 二次防护：stop() 可能在获取锁前被调用（_bm 变为 None）
+            if self._bm is None:
+                return {"error": True, "message": _ERR_BROWSER_NOT_RUNNING, "results": []}
+            results = await src.search.search_notes(
+                self._bm, keyword=keyword, max_count=max_count
+            )
+
+        return {
+            "keyword": keyword,
+            "count": len(results),
+            "results": results,
+        }
+
+    async def get_note_detail(self, note_url: str, max_comments: int = 20) -> dict:
+        """采集单篇笔记详情 + 评论（MCP 工具调用入口）。
+
+        Args:
+            note_url: 笔记详情页完整 URL
+            max_comments: 最多采集评论数（默认 20）
+
+        Returns:
+            笔记详情字典（包含 comments 字段），
+            或 {"error": True, "message": str}（浏览器未启动 / 采集失败）
+            — 始终返回 dict，不返回 None
+        """
+        # 快速路径：浏览器明确未启动时提前返回
+        if not self._running:
+            return {"error": True, "message": _ERR_BROWSER_NOT_RUNNING}
+
+        async with self._lock:
+            # 二次防护：stop() 可能在获取锁前被调用（_bm 变为 None）
+            if self._bm is None:
+                return {"error": True, "message": _ERR_BROWSER_NOT_RUNNING}
+            result = await src.note.fetch_single_note(
+                self._bm, note_url=note_url, max_comments=max_comments
+            )
+
+        if result is None:
+            return {"error": True, "message": "笔记采集失败，URL 无效或页面无法加载"}
+        return result
+
     async def check_login_status(self) -> dict:
         """检查当前小红书登录状态。
 
@@ -118,10 +192,16 @@ class CrawlerSession:
             return {
                 "logged_in": False,
                 "browser_running": False,
-                "message": "浏览器未启动。请确保 MCP 服务正常运行后重试。",
+                "message": _ERR_BROWSER_NOT_RUNNING,
             }
 
         async with self._lock:
+            if self._bm is None:
+                return {
+                    "logged_in": False,
+                    "browser_running": False,
+                    "message": _ERR_BROWSER_NOT_RUNNING,
+                }
             page = await self._bm.new_page()
             try:
                 logged_in = await is_logged_in(page)

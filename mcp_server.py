@@ -100,6 +100,79 @@ async def check_login_status() -> dict:
 
 
 # ============================================================
+# Phase B 工具
+# ============================================================
+
+
+@mcp.tool()
+async def search_notes(keyword: str, max_count: int = 20) -> dict:
+    """按关键词搜索小红书笔记，返回摘要列表。
+
+    Args:
+        keyword: 搜索关键词（必填，不能为空）
+        max_count: 最多返回笔记数（可选，默认 20，范围 1-50）
+
+    Returns:
+        keyword (str): 搜索关键词
+        count (int): 实际返回条数
+        results (list): 笔记摘要列表，每条包含
+            note_id / title / author / likes / note_url 等字段
+
+    预计耗时：30-90 秒（含页面加载 + 滚动）
+    """
+    # 输入验证：keyword 不能为空
+    stripped_keyword = keyword.strip()
+    if not stripped_keyword:
+        return {"error": True, "message": "keyword 不能为空"}
+
+    # 边界截断：max_count 限制在 1-50
+    clamped_max_count = max(1, min(max_count, 50))
+
+    logger.info("工具调用：search_notes（keyword=%s，max_count=%d）", stripped_keyword, clamped_max_count)
+    result = await _session.search_notes(keyword=stripped_keyword, max_count=clamped_max_count)
+    logger.info("search_notes 完成：count=%s", result.get("count", 0))
+    return result
+
+
+@mcp.tool()
+async def get_note_detail(note_url: str, max_comments: int = 20) -> dict:
+    """采集单篇小红书笔记的详情和评论。
+
+    Args:
+        note_url: 笔记详情页 URL（必填），格式：
+            https://www.xiaohongshu.com/explore/{note_id}?xsec_token=...
+        max_comments: 最多采集评论数（可选，默认 20，范围 0-50）
+
+    Returns:
+        成功时返回笔记详情字典，包含：
+            note_id / title / content / author / likes / collects /
+            tags / images / comments 等字段
+        失败时返回 {"error": True, "message": str}
+
+    预计耗时：15-60 秒（含页面加载 + 评论滚动）
+    """
+    # 输入验证：URL 不能为空
+    if not note_url.strip():
+        return {"error": True, "message": "note_url 不能为空"}
+
+    # 边界截断：max_comments 限制在 0-50
+    clamped_max_comments = max(0, min(max_comments, 50))
+
+    # 日志中截去 xsec_token 等查询参数，避免敏感 token 写入日志
+    safe_url = note_url.split("?")[0]
+    logger.info("工具调用：get_note_detail（url=%s，max_comments=%d）", safe_url, clamped_max_comments)
+
+    result = await _session.get_note_detail(note_url=note_url, max_comments=clamped_max_comments)
+
+    # 防御性检查（session 层已保证返回 dict，此处作兜底）
+    if result is None:
+        return {"error": True, "message": f"无法采集笔记详情，请检查 URL 是否有效：{safe_url}"}
+
+    logger.info("get_note_detail 完成：note_id=%s", result.get("note_id", "unknown"))
+    return result
+
+
+# ============================================================
 # 入口
 # ============================================================
 
