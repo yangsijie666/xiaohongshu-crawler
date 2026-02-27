@@ -4,24 +4,30 @@
 通过 MCP 协议将采集能力暴露为 AI 助手可调用的工具，支持：
   - Claude Desktop / Code / Cursor 等任意 MCP 客户端
 
-当前实现（Phase A-D）：
+工具列表：
   - check_login_status：检查登录状态
   - search_notes：关键词搜索笔记
   - get_note_detail：采集笔记详情 + 评论
   - crawl_keyword：完整采集流程
   - get_saved_data：查询本地已保存数据
 
-Phase D 增强：
-  - 工具超时控制（search 120s / detail 90s / crawl 600s）
-  - 日志输出到文件（stdout 被 MCP stdio 占用）
-  - 统一结构化错误格式透传
+Transport 模式（Phase E）：
+  - stdio（默认）：本地集成，Claude Desktop / Code 直接调用
+  - sse：SSE Transport，支持远程部署
+  - streamable-http：Streamable HTTP Transport，MCP 最新标准
 
 启动方式：
+  # stdio 模式（默认，供 Claude Desktop / Code 调用）
+  uv run python mcp_server.py
+
+  # SSE 模式（远程部署）
+  uv run python mcp_server.py --transport sse --host 0.0.0.0 --port 8000
+
+  # Streamable HTTP 模式
+  uv run python mcp_server.py --transport streamable-http --host 0.0.0.0 --port 8000
+
   # 本地开发调试（MCP Inspector）
   mcp dev mcp_server.py
-
-  # 直接运行
-  uv run python mcp_server.py
 
 配置 Claude Desktop / Code：
   参考 claude_mcp_config.example.json
@@ -33,6 +39,7 @@ Phase D 增强：
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import sys
@@ -385,8 +392,67 @@ async def get_data_resource(filename: str) -> str:
 
 
 # ============================================================
+# Phase E: CLI 参数解析 + Transport 选择
+# ============================================================
+
+_VALID_TRANSPORTS = ("stdio", "sse", "streamable-http")
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """解析命令行参数，支持 transport / host / port 选择。
+
+    Args:
+        argv: 命令行参数列表（None 时使用 sys.argv[1:]，便于测试传入）
+
+    Returns:
+        解析后的 Namespace，包含 transport / host / port 字段
+    """
+    parser = argparse.ArgumentParser(
+        description="小红书数据采集 MCP 服务",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--transport",
+        choices=_VALID_TRANSPORTS,
+        default="stdio",
+        help="传输协议：stdio（默认，本地）/ sse（远程 SSE）/ streamable-http（HTTP）",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="SSE / HTTP 监听地址（默认 127.0.0.1，远程部署用 0.0.0.0）",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="SSE / HTTP 监听端口（默认 8000）",
+    )
+    return parser.parse_args(argv)
+
+
+def main() -> None:
+    """MCP 服务入口：解析参数并启动对应 transport。"""
+    args = parse_args()
+
+    if args.transport == "stdio":
+        # stdio 模式：直接运行，不修改 host/port 设置
+        logger.info("以 stdio 模式启动 MCP 服务")
+        mcp.run()
+    else:
+        # SSE / Streamable HTTP 模式：更新监听地址后启动
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+        logger.info(
+            "以 %s 模式启动 MCP 服务（%s:%d）",
+            args.transport, args.host, args.port,
+        )
+        mcp.run(transport=args.transport)
+
+
+# ============================================================
 # 入口
 # ============================================================
 
 if __name__ == "__main__":
-    mcp.run()
+    main()

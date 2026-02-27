@@ -1001,6 +1001,8 @@ dependencies = [
     { name = "playwright" },
     { name = "playwright-stealth" },
     { name = "pyyaml" },
+    { name = "starlette" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -1018,6 +1020,8 @@ requires-dist = [
     { name = "playwright", specifier = ">=1.58.0" },
     { name = "playwright-stealth", specifier = ">=2.0.2" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "starlette", specifier = ">=0.52.1" },
+    { name = "uvicorn", specifier = ">=0.41.0" },
 ]
 
 [package.metadata.requires-dev]
