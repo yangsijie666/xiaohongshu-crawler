@@ -1,0 +1,44 @@
+Documentation Update Summary
+============================
+Generated: 2026-02-27
+
+Updated Files
+-------------
+CLAUDE.md
+  - Fixed: storage.py 描述 "JSON + CSV" → "JSON + Excel/xlsx"
+  - Fixed: 主分支 "master" → "main"，开发分支改为通用格式
+
+README.md
+  - Rewrote: 从空文件生成完整 README（命令参考、配置说明、输出格式、依赖）
+  - Source: pyproject.toml, config/settings.yaml, src/ modules
+
+Created Files
+-------------
+docs/CONTRIBUTING.md
+  - 开发环境搭建、可用命令、验证测试、代码规范、Git 工作流、PR 清单
+  - Source: pyproject.toml, CLAUDE.md, config/settings.yaml
+
+Skipped Files
+-------------
+docs/ENV.md        — 无环境变量（配置通过 YAML 文件管理）
+docs/RUNBOOK.md    — CLI 应用，无部署流程
+docs/API.md        — 无 API 端点（非 Web 服务）
+
+Staleness Check
+---------------
+CLAUDE.md                      — 1 day old  (OK)
+README.md                      — 2 days old (OK, now regenerated)
+.plan/rednote-crawler-plan.md  — 1 day old  (OK)
+docs/CODEMAPS/*.md             — 0 days old (just generated)
+
+No stale documentation detected (all within 90-day threshold).
+
+Auto-Generated Markers
+----------------------
+README.md contains 3 auto-generated sections:
+  <!-- AUTO-GENERATED: commands-reference -->
+  <!-- AUTO-GENERATED: config-reference -->
+  <!-- AUTO-GENERATED: dependencies -->
+
+docs/CONTRIBUTING.md contains 1 auto-generated section:
+  <!-- AUTO-GENERATED: commands-reference -->

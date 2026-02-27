@@ -1,0 +1,39 @@
+Codemap Analysis Report
+=======================
+Generated: 2026-02-27
+Status: INITIAL GENERATION (no previous codemaps existed)
+
+Files Scanned
+-------------
+Source modules:  9 files (1,744 lines)
+Entry point:     1 file (205 lines)
+Scripts:         5 files (808 lines)
+Config:          1 file (26 lines)
+Total:           16 files (~2,800 lines)
+
+Codemaps Generated
+------------------
+docs/CODEMAPS/architecture.md  — System diagram, module graph, anti-detection layers
+docs/CODEMAPS/backend.md       — Module pipeline, function signatures, verification scripts
+docs/CODEMAPS/data.md          — Data models (3 types), storage format, Excel field mappings
+docs/CODEMAPS/dependencies.md  — 5 direct deps, stdlib usage, external services
+
+Skipped Codemaps
+----------------
+frontend.md — N/A (CLI application, no frontend)
+
+Architecture Notes
+------------------
+- Single-app CLI architecture (not monorepo)
+- Largest module: src/parser.py (569 lines) — candidate for splitting if it grows
+- All modules follow async pattern consistently
+- Clean dependency tree — parser.py and storage.py are leaves with no internal deps
+- Dual anti-detection layer is a unique architectural feature
+
+Staleness Warnings
+------------------
+None (first generation)
+
+Next Scan Recommended
+---------------------
+After any of: new module added, major refactoring, dependency changes

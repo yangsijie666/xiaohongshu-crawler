@@ -45,7 +45,7 @@ src/
 ├── note.py        # 笔记详情采集（含重试逻辑）
 ├── comment.py     # 评论采集（Top N）
 ├── parser.py      # 页面数据解析（搜索卡片 / 详情 / 评论）
-└── storage.py     # 数据存储（JSON + CSV）
+└── storage.py     # 数据存储（JSON + Excel/xlsx）
 scripts/           # 验证脚本
 config/settings.yaml  # 采集配置（关键词、延迟、浏览器参数）
 main.py            # 入口文件
@@ -111,7 +111,7 @@ main.py            # 入口文件
 
 - **Conventional Commits:** `type(scope): 中文描述`
 - 类型: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`
-- 主分支: `master`，当前开发分支: `feat/phase3-note-comment`
+- 主分支: `main`，功能分支: `feat/<功能名>`
 - 不主动 commit，用户要求时才提交
 - 不主动 push，用户要求时才推送
 
