@@ -5,7 +5,9 @@ MCP 服务级浏览器会话管理模块
   - 管理 Playwright 浏览器实例的服务级生命周期（长驻进程，区别于单次 async with）
   - 通过 asyncio.Lock 序列化所有浏览器操作，防止并发竞争
   - 提供登录态检查接口，供 MCP 工具调用
-  - 健康检查 + 自动重建（Phase D 实现）
+  - 浏览器健康检查 + 崩溃自动恢复（Phase D）
+  - 操作中登录态失效检测（Phase D）
+  - 统一结构化错误格式（Phase D）
 
 与 BrowserManager 的区别：
   - BrowserManager：单次采集的 async with 上下文管理器
@@ -36,12 +38,15 @@ import src.note
 import src.search
 from src.auth import is_logged_in
 from src.browser import BrowserManager
+from src.errors import (
+    browser_crashed_error,
+    browser_not_running_error,
+    crawl_failed_error,
+    login_expired_error,
+)
 from src.storage import Storage
 
 logger = logging.getLogger(__name__)
-
-# 浏览器未启动时的统一错误消息
-_ERR_BROWSER_NOT_RUNNING = "浏览器未启动。请确保 MCP 服务正常运行后重试。"
 
 # crawl_keyword 工具使用的默认存储配置
 _DEFAULT_STORAGE_CONFIG: dict = {
@@ -85,6 +90,8 @@ class CrawlerSession:
       - 同一时刻只有一个 CrawlerSession 实例应处于运行状态（调用方负责保证）
       - 所有浏览器操作必须通过 browser_lock() 上下文管理器串行执行
       - MCP stdio 模式下默认 headless=True，节省资源
+      - 浏览器崩溃时自动尝试恢复一次（Phase D）
+      - 操作失败时检测登录态，返回精确错误码（Phase D）
     """
 
     def __init__(self, headless: bool = True) -> None:
@@ -137,6 +144,77 @@ class CrawlerSession:
         self._running = False
         logger.info("MCP 浏览器会话已关闭")
 
+    # ============================================================
+    # Phase D: 健康检查与自动恢复
+    # ============================================================
+
+    async def _is_browser_healthy(self) -> bool:
+        """检查浏览器是否仍然存活且可用。
+
+        通过 Playwright context.browser.is_connected() 判断浏览器进程是否正常。
+
+        Returns:
+            True 表示浏览器健康可用，False 表示不可用
+        """
+        if self._bm is None:
+            return False
+        try:
+            ctx = self._bm.context
+            if ctx is None:
+                return False
+            return ctx.browser.is_connected()
+        except Exception:
+            return False
+
+    async def _ensure_browser(self) -> Optional[BrowserManager]:
+        """确保浏览器可用，崩溃时尝试自动恢复。
+
+        检查浏览器健康状态，不健康时执行一次 stop → start 恢复流程。
+
+        Returns:
+            BrowserManager 实例（可用时），或 None（恢复失败）
+        """
+        if not self._running:
+            return None
+
+        if await self._is_browser_healthy():
+            return self._bm
+
+        # 浏览器不健康，尝试恢复
+        logger.warning("浏览器健康检查失败，尝试自动恢复...")
+        await self.stop()
+        try:
+            await self.start()
+            logger.info("浏览器自动恢复成功")
+            return self._bm
+        except Exception as e:
+            logger.error("浏览器自动恢复失败：%s", e)
+            return None
+
+    # ============================================================
+    # Phase D: 登录态失效检测
+    # ============================================================
+
+    async def _check_login_in_lock(self) -> bool:
+        """在已持有锁的情况下检测登录态（内部方法）。
+
+        创建临时页面执行登录态检查，确保页面在检查后关闭。
+
+        Returns:
+            True 表示已登录，False 表示未登录或检查失败
+        """
+        if self._bm is None:
+            return False
+        try:
+            page = await self._bm.new_page()
+            try:
+                return await is_logged_in(page)
+            finally:
+                await page.close()
+        except Exception as e:
+            logger.warning("锁内登录态检测异常：%s", e)
+            return False
+
     @asynccontextmanager
     async def browser_lock(self) -> AsyncGenerator[Optional[BrowserManager], None]:
         """获取浏览器独占锁，确保操作串行执行。
@@ -155,29 +233,41 @@ class CrawlerSession:
     async def search_notes(self, keyword: str, max_count: int = 20) -> dict:
         """按关键词搜索笔记，返回摘要列表（MCP 工具调用入口）。
 
+        Phase D 增强：
+          - 浏览器未启动/崩溃时返回结构化错误（含 code/action）
+          - 搜索空结果时检测登录态，区分 LOGIN_EXPIRED 和正常空结果
+
         Args:
             keyword: 搜索关键词（调用方负责确保非空）
             max_count: 最多返回条数（默认 20）
 
         Returns:
-            {
-                "keyword": str,     # 搜索关键词
-                "count": int,       # 实际返回条数
-                "results": list     # 笔记摘要列表
-            }
-            或 {"error": True, "message": str, "results": []}（浏览器未启动）
+            正常：{ keyword, count, results }
+            错误：{ error, code, message, action }
         """
         # 快速路径：浏览器明确未启动时提前返回
         if not self._running:
-            return {"error": True, "message": _ERR_BROWSER_NOT_RUNNING, "results": []}
+            return browser_not_running_error().to_dict()
 
         async with self._lock:
-            # 二次防护：stop() 可能在获取锁前被调用（_bm 变为 None）
+            # 健康检查 + 自动恢复（释放锁前完成，恢复期间其他请求排队等待）
+            bm = await self._ensure_browser()
+            if bm is None:
+                return browser_crashed_error().to_dict()
+
+            # 二次防护：_ensure_browser 可能在恢复过程中改变 _bm
             if self._bm is None:
-                return {"error": True, "message": _ERR_BROWSER_NOT_RUNNING, "results": []}
+                return browser_crashed_error().to_dict()
+
             results = await src.search.search_notes(
                 self._bm, keyword=keyword, max_count=max_count
             )
+
+            # 空结果时检测登录态（区分"真的没搜到"和"登录态失效"）
+            if not results:
+                logged_in = await self._check_login_in_lock()
+                if not logged_in:
+                    return login_expired_error().to_dict()
 
         return {
             "keyword": keyword,
@@ -188,56 +278,74 @@ class CrawlerSession:
     async def get_note_detail(self, note_url: str, max_comments: int = 20) -> dict:
         """采集单篇笔记详情 + 评论（MCP 工具调用入口）。
 
+        Phase D 增强：
+          - 浏览器未启动/崩溃时返回结构化错误
+          - 采集失败时检测登录态，区分 LOGIN_EXPIRED 和 CRAWL_FAILED
+
         Args:
             note_url: 笔记详情页完整 URL
             max_comments: 最多采集评论数（默认 20）
 
         Returns:
-            笔记详情字典（包含 comments 字段），
-            或 {"error": True, "message": str}（浏览器未启动 / 采集失败）
-            — 始终返回 dict，不返回 None
+            成功：笔记详情字典（包含 comments 字段）
+            错误：{ error, code, message, action }
         """
         # 快速路径：浏览器明确未启动时提前返回
         if not self._running:
-            return {"error": True, "message": _ERR_BROWSER_NOT_RUNNING}
+            return browser_not_running_error().to_dict()
 
         async with self._lock:
-            # 二次防护：stop() 可能在获取锁前被调用（_bm 变为 None）
+            bm = await self._ensure_browser()
+            if bm is None:
+                return browser_crashed_error().to_dict()
+
             if self._bm is None:
-                return {"error": True, "message": _ERR_BROWSER_NOT_RUNNING}
+                return browser_crashed_error().to_dict()
+
             result = await src.note.fetch_single_note(
                 self._bm, note_url=note_url, max_comments=max_comments
             )
 
-        if result is None:
-            return {"error": True, "message": "笔记采集失败，URL 无效或页面无法加载"}
+            # 采集失败时检测登录态
+            if result is None:
+                logged_in = await self._check_login_in_lock()
+                if not logged_in:
+                    return login_expired_error().to_dict()
+                return crawl_failed_error("URL 无效或页面无法加载").to_dict()
+
         return result
 
     async def check_login_status(self) -> dict:
         """检查当前小红书登录状态。
 
-        不需要手动调用 browser_lock()，内部已自动加锁。
+        Phase D 增强：
+          - 未运行时返回包含 code 字段的结构化错误
 
         Returns:
             {
-                "logged_in": bool,         # 是否已登录小红书
-                "browser_running": bool,   # 浏览器是否在运行
-                "message": str             # 状态说明（含操作建议）
+                "logged_in": bool,
+                "browser_running": bool,
+                "message": str,
+                "code": str (仅错误时)
             }
         """
         if not self._running:
+            err = browser_not_running_error()
             return {
                 "logged_in": False,
                 "browser_running": False,
-                "message": _ERR_BROWSER_NOT_RUNNING,
+                "message": err.message,
+                "code": err.code,
             }
 
         async with self._lock:
             if self._bm is None:
+                err = browser_not_running_error()
                 return {
                     "logged_in": False,
                     "browser_running": False,
-                    "message": _ERR_BROWSER_NOT_RUNNING,
+                    "message": err.message,
+                    "code": err.code,
                 }
             page = await self._bm.new_page()
             try:
@@ -256,7 +364,6 @@ class CrawlerSession:
                     "message": message,
                 }
             finally:
-                # 确保页面始终被关闭，防止资源泄漏
                 await page.close()
 
     async def crawl_keyword(
@@ -267,32 +374,32 @@ class CrawlerSession:
     ) -> dict:
         """执行完整采集流程：搜索 → 详情 → 评论 → 存储（MCP 工具调用入口）。
 
+        Phase D 增强：
+          - 浏览器未启动/崩溃时返回结构化错误
+
         Args:
             keyword: 搜索关键词（调用方负责确保非空）
             max_notes: 最多采集笔记数（默认 10，自动限制到 20 以内）
             max_comments: 每条笔记最多采集评论数（默认 20）
 
         Returns:
-            {
-                "keyword": str,
-                "search_count": int,   # 搜索阶段获得的笔记数
-                "detail_count": int,   # 成功采集详情的笔记数
-                "total_comments": int, # 所有笔记的评论总数
-                "summary": str         # 人类可读的采集摘要
-            }
-            或 {"error": True, "message": str}（浏览器未启动 / 竞态）
+            正常：{ keyword, search_count, detail_count, total_comments, summary }
+            错误：{ error, code, message, action }
         """
         # 快速路径：浏览器明确未启动时提前返回
         if not self._running:
-            return {"error": True, "message": _ERR_BROWSER_NOT_RUNNING}
+            return browser_not_running_error().to_dict()
 
         # 限制 max_notes 到上限，避免单次任务耗时过长
         clamped_max_notes = min(max_notes, _MAX_NOTES_LIMIT)
 
         async with self._lock:
-            # 二次防护：stop() 可能在获取锁前被调用（_bm 变为 None）
+            bm = await self._ensure_browser()
+            if bm is None:
+                return browser_crashed_error().to_dict()
+
             if self._bm is None:
-                return {"error": True, "message": _ERR_BROWSER_NOT_RUNNING}
+                return browser_crashed_error().to_dict()
 
             # Step 1: 搜索
             search_results = await src.search.search_notes(
@@ -345,10 +452,10 @@ class CrawlerSession:
             {
                 "files": [
                     {
-                        "path": str,         # 文件相对路径
-                        "keyword": str,      # 从文件名提取的关键词
-                        "created_at": str,   # 文件创建时间（ISO 8601）
-                        "size_bytes": int    # 文件大小（字节）
+                        "path": str,
+                        "keyword": str,
+                        "created_at": str,
+                        "size_bytes": int
                     },
                     ...
                 ]

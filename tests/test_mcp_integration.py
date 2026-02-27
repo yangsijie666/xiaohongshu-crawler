@@ -272,11 +272,13 @@ class TestMCPIntegrationSessionNotRunning:
         assert result["browser_running"] is False
         assert result["logged_in"] is False
 
-    async def test_search_notes_not_running_has_empty_results(self):
-        """浏览器未运行时的错误响应应包含 results=[]，保持结构一致性。"""
+    async def test_search_notes_not_running_returns_structured_error(self):
+        """浏览器未运行时应返回结构化错误（Phase D: 含 code/action）。"""
         real_session = CrawlerSession(headless=True)
 
         with patch.object(mcp_server, "_session", real_session):
             result = await mcp_server.search_notes(keyword="test")
 
-        assert result.get("results") == []
+        assert result.get("error") is True
+        assert result.get("code") == "BROWSER_NOT_RUNNING"
+        assert "action" in result

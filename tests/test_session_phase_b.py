@@ -53,18 +53,21 @@ class TestCrawlerSessionSearchNotes:
         """返回值必须包含 keyword / count / results 三个键。"""
         with patch("src.session.BrowserManager") as MockBM:
             with patch("src.search.search_notes", new=AsyncMock(return_value=[])):
-                mock_bm = AsyncMock()
-                MockBM.return_value = mock_bm
-                mock_bm.__aenter__ = AsyncMock(return_value=mock_bm)
-                mock_bm.__aexit__ = AsyncMock(return_value=None)
+                # Phase D: 空结果时会检测登录态，mock 为已登录以获得正常空响应
+                with patch("src.session.is_logged_in", new=AsyncMock(return_value=True)):
+                    mock_bm = AsyncMock()
+                    MockBM.return_value = mock_bm
+                    mock_bm.__aenter__ = AsyncMock(return_value=mock_bm)
+                    mock_bm.__aexit__ = AsyncMock(return_value=None)
+                    mock_bm.new_page = AsyncMock(return_value=AsyncMock())
 
-                session = CrawlerSession()
-                await session.start()
-                result = await session.search_notes("keyword")
+                    session = CrawlerSession()
+                    await session.start()
+                    result = await session.search_notes("keyword")
 
-                assert "keyword" in result
-                assert "count" in result
-                assert "results" in result
+                    assert "keyword" in result
+                    assert "count" in result
+                    assert "results" in result
 
     async def test_uses_browser_lock_during_search(self):
         """搜索期间应持有 browser lock（通过 _lock 串行化）。"""
@@ -114,18 +117,25 @@ class TestCrawlerSessionSearchNotesRaceCondition:
     async def test_returns_error_when_bm_is_none_despite_running_flag(self):
         """_running=True 但 _bm=None 时（stop() 竞态），应返回 error dict。
 
-        直接操作内部状态模拟竞态：stop() 在快速路径检查后、获取锁前被调用，
-        导致 _bm 为 None 但 _running 仍为 True。
+        Phase D: _ensure_browser() 会尝试自动恢复，需 mock BrowserManager
+        使恢复也失败，验证最终返回 BROWSER_CRASHED 错误。
         """
-        session = CrawlerSession()
-        session._running = True  # 绕过快速路径
-        session._bm = None       # 模拟 stop() 已将 _bm 置空
+        with patch("src.session.BrowserManager") as MockBM:
+            # 恢复也失败
+            mock_bm = AsyncMock()
+            mock_bm.__aenter__ = AsyncMock(side_effect=RuntimeError("恢复失败"))
+            mock_bm.__aexit__ = AsyncMock(return_value=None)
+            MockBM.return_value = mock_bm
 
-        result = await session.search_notes("test")
+            session = CrawlerSession()
+            session._running = True  # 绕过快速路径
+            session._bm = None       # 模拟 stop() 已将 _bm 置空
 
-        assert isinstance(result, dict)
-        assert result.get("error") is True
-        assert result.get("results") == []
+            result = await session.search_notes("test")
+
+            assert isinstance(result, dict)
+            assert result.get("error") is True
+            assert result.get("code") == "BROWSER_CRASHED"
 
 
 class TestCrawlerSessionGetNoteDetailRaceCondition:
@@ -133,14 +143,21 @@ class TestCrawlerSessionGetNoteDetailRaceCondition:
 
     async def test_returns_error_when_bm_is_none_despite_running_flag(self):
         """_running=True 但 _bm=None 时（stop() 竞态），应返回 error dict。"""
-        session = CrawlerSession()
-        session._running = True
-        session._bm = None
+        with patch("src.session.BrowserManager") as MockBM:
+            mock_bm = AsyncMock()
+            mock_bm.__aenter__ = AsyncMock(side_effect=RuntimeError("恢复失败"))
+            mock_bm.__aexit__ = AsyncMock(return_value=None)
+            MockBM.return_value = mock_bm
 
-        result = await session.get_note_detail("https://www.xiaohongshu.com/explore/abc123")
+            session = CrawlerSession()
+            session._running = True
+            session._bm = None
 
-        assert isinstance(result, dict)
-        assert result.get("error") is True
+            result = await session.get_note_detail("https://www.xiaohongshu.com/explore/abc123")
+
+            assert isinstance(result, dict)
+            assert result.get("error") is True
+            assert result.get("code") == "BROWSER_CRASHED"
 
 
 class TestCrawlerSessionGetNoteDetail:

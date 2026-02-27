@@ -181,15 +181,25 @@ class TestCrawlerSessionCrawlKeyword:
                         assert lock_acquired is True
 
     async def test_returns_error_when_bm_none_race_condition(self):
-        """_running=True 但 _bm=None（竞态），应返回 error dict。"""
-        session = CrawlerSession()
-        session._running = True
-        session._bm = None
+        """_running=True 但 _bm=None（竞态），应返回 error dict。
 
-        result = await session.crawl_keyword("test")
+        Phase D: _ensure_browser() 会尝试自动恢复，mock 使恢复失败。
+        """
+        with patch("src.session.BrowserManager") as MockBM:
+            mock_bm = AsyncMock()
+            mock_bm.__aenter__ = AsyncMock(side_effect=RuntimeError("恢复失败"))
+            mock_bm.__aexit__ = AsyncMock(return_value=None)
+            MockBM.return_value = mock_bm
 
-        assert isinstance(result, dict)
-        assert result.get("error") is True
+            session = CrawlerSession()
+            session._running = True
+            session._bm = None
+
+            result = await session.crawl_keyword("test")
+
+            assert isinstance(result, dict)
+            assert result.get("error") is True
+            assert result.get("code") == "BROWSER_CRASHED"
 
     async def test_default_max_notes_is_10(self):
         """默认 max_notes 应为 10。"""
