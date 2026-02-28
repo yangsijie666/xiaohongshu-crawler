@@ -11,3 +11,11 @@ wheels/
 
 .claude
 .plan
+
+# Runtime data directories
+data/
+auth_state/
+logs/
+
+# Test coverage
+.coverage

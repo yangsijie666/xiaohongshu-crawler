@@ -1,0 +1,26 @@
+# 小红书数据采集器配置
+
+# 采集配置
+crawler:
+  keywords:                     # 搜索关键词列表
+    - "示例关键词"
+  max_notes_per_keyword: 20     # 每个关键词最多采集笔记数
+  max_comments_per_note: 20     # 每条笔记最多采集评论数
+  scroll_pause: 1.5             # 滚动后等待时间（秒）
+  page_load_timeout: 30         # 页面加载超时（秒）
+
+# 延迟配置（模拟人类行为，降低风险）
+delay:
+  between_notes: [2, 5]         # 笔记之间随机延迟范围（秒）
+  between_searches: [3, 8]      # 搜索之间随机延迟范围（秒）
+  scroll_interval: [1, 3]       # 滚动间隔随机延迟范围（秒）
+
+# 浏览器配置
+browser:
+  headless: false               # 是否无头模式（调试时建议 false）
+
+# 存储配置
+storage:
+  output_dir: "data"
+  save_raw_json: true           # 是否保存原始 JSON
+  save_xlsx: true               # 是否保存 Excel（xlsx）

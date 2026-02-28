@@ -1,0 +1,29 @@
+{
+  "_comment": "复制本文件内容，合并到 ~/Library/Application Support/Claude/claude_desktop_config.json（Mac）",
+  "_comment2": "将 /path/to/rednote-crawler 替换为项目绝对路径",
+
+  "_comment3": "=== 方案 A：本地 stdio 模式（默认，推荐） ===",
+  "mcpServers": {
+    "rednote-crawler": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/path/to/rednote-crawler",
+        "python",
+        "mcp_server.py"
+      ],
+      "env": {}
+    }
+  },
+
+  "_comment4": "=== 方案 B：远程 SSE 模式（需要先在服务器启动 SSE 服务） ===",
+  "_comment5": "服务器端：uv run python mcp_server.py --transport sse --host 0.0.0.0 --port 8000",
+  "_sse_example": {
+    "mcpServers": {
+      "rednote-crawler": {
+        "url": "http://your-server:8000/sse"
+      }
+    }
+  }
+}
