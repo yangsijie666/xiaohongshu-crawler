@@ -11,7 +11,7 @@
 
 ```bash
 # 克隆仓库
-git clone <repo-url> && cd rednote-crawler
+git clone https://github.com/yangsijie666/xiaohongshu-crawler.git && cd xiaohongshu-crawler
 
 # 安装依赖
 uv sync
@@ -26,12 +26,18 @@ uv run playwright install chromium
 | 命令 | 说明 |
 |------|------|
 | `uv sync` | 安装/同步依赖 |
-| `uv run python main.py` | 运行完整采集 |
+| `uv run playwright install chromium` | 安装 Chromium 浏览器 |
+| `uv run python main.py` | 运行完整采集流程 |
+| `uv run python mcp_server.py` | 启动 MCP 服务（stdio 模式） |
+| `uv run python mcp_server.py --transport sse` | 启动 MCP 服务（SSE 模式） |
+| `uv run python mcp_server.py --transport streamable-http` | 启动 MCP 服务（HTTP 模式） |
 | `uv run python scripts/verify_stealth.py` | 反检测验证 |
 | `uv run python scripts/verify_login.py` | 登录验证 |
 | `uv run python scripts/verify_search.py` | 搜索采集验证 |
 | `uv run python scripts/verify_note.py` | 笔记详情+评论验证 |
 | `uv run python scripts/verify_e2e.py` | 端到端集成验证 |
+| `uv run python scripts/verify_mcp_tools.py` | MCP 工具验证 |
+| `uv run pytest --cov` | 运行测试 + 覆盖率 |
 | `uv add <package>` | 添加新依赖 |
 <!-- /AUTO-GENERATED: commands-reference -->
 
@@ -91,7 +97,7 @@ uv run python scripts/verify_e2e.py
 
 ### 分支策略
 
-- 主分支: `main`
+- 主分支: `master`
 - 功能分支: `feat/<功能名>`
 
 ## PR 提交清单

@@ -31,7 +31,7 @@
 
 ```bash
 # 1. 克隆仓库
-git clone <repo-url> && cd rednote-crawler
+git clone https://github.com/yangsijie666/xiaohongshu-crawler.git && cd xiaohongshu-crawler
 
 # 2. 安装依赖
 uv sync

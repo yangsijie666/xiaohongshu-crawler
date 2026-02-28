@@ -1,7 +1,7 @@
 [project]
 name = "rednote-crawler"
 version = "0.1.0"
-description = "Add your description here"
+description = "小红书数据采集框架 + MCP 服务 | Xiaohongshu (RedNote) crawler with anti-detection and MCP protocol support"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
